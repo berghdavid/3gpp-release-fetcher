@@ -37,6 +37,7 @@ def ftp_recursive_download(ftp: FTP, remote_dir: str, local_dir: str):
 
 def fetch_specs(release_v: str, ftp_user="", ftp_password=""):
     """Fetch all 3GPP specifications for a certain release version."""
+    print("Fetching 3GPP specifications...")
     download_path = join(DOWNLOADS_DIR, release_v)
     os.makedirs(download_path, exist_ok=True)
 
@@ -48,6 +49,7 @@ def fetch_specs(release_v: str, ftp_user="", ftp_password=""):
 
 def unzip_dirs(release_v: str):
     """Unzip all .zip files in the downloads directory."""
+    print("Unzipping 3GPP specifications...")
     download_path = join(DOWNLOADS_DIR, release_v)
     for dirpath, _, filenames in os.walk(download_path):
         for filename in filenames:
@@ -65,6 +67,7 @@ def unzip_dirs(release_v: str):
 
 def convert_docs(release_v: str, gotenberg_endpoint: str):
     """Convert all .doc files to PDF in the extracted directory."""
+    print("Converting 3GPP specifications to PDF...")
     gotenberg_url = f"{gotenberg_endpoint}/forms/libreoffice/convert"
     root_dir = join(DOWNLOADS_DIR, release_v)
 
@@ -100,15 +103,24 @@ def get_parser() -> argparse.ArgumentParser:
                         metavar='\b', help="Gotenberg endpoint.")
     parser.add_argument("-v", "--version", dest="version", type=str, required=True,
                         metavar='\b', help="3GPP release version.")
+    parser.add_argument("-f", "--skip-fetch", dest="skip_fetch", type=bool, default=False,
+                        required=False, metavar='\b', help="Skip the data fetching stage.")
+    parser.add_argument("-u", "--skip-unzip", dest="skip_unzip", type=bool, default=False,
+                        required=False, metavar='\b', help="Skip the unzipping stage.")
+    parser.add_argument("-c", "--skip-convert", dest="skip_convert", type=bool, default=False,
+                        required=False, metavar='\b', help="Skip the PDF conversion stage.")
     return parser
 
 
 def main():
     """5G Analyzer entrypoint"""
     args = get_parser().parse_args()
-    fetch_specs(args.version)
-    unzip_dirs(args.version)
-    convert_docs(args.version, args.gotenberg)
+    if not args.skip_fetch:
+        fetch_specs(args.version)
+    if not args.skip_unzip:
+        unzip_dirs(args.version)
+    if not args.skip_convert:
+        convert_docs(args.version, args.gotenberg)
 
 
 if __name__ == "__main__":
