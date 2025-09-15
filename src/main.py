@@ -3,7 +3,7 @@
 """
 
 import argparse
-from ftp import fetch_specs, unzip_dirs, convert_doc
+from ftp import fetch_specs, unzip_dirs, convert_docs
 
 def get_parser() -> argparse.ArgumentParser:
     """Parse command line arguments into Args object."""
@@ -21,7 +21,8 @@ def main():
     args = get_parser().parse_args()
     fetch_specs(args.version)
     unzip_dirs(args.version)
-    convert_doc(args.version, args.gotenberg)
+    convert_docs(args.version, args.gotenberg)
+
 
 if __name__ == "__main__":
     main()

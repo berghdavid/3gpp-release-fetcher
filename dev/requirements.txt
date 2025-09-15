@@ -2,3 +2,4 @@ pylint
 pyftpdlib
 zipfile36
 requests
+tqdm
