@@ -105,11 +105,10 @@ def convert_docs(release_v: str, gotenberg_endpoint: str, timeout: float, thread
             os.makedirs(pdf_dir, exist_ok=True)
             pdf_path = join(pdf_dir, filename + ".pdf")
             if os.path.isfile(pdf_path):
-                print(f"✅ PDF already exists: {doc_path} → {pdf_path}")
                 pre_converted.append(doc_path)
                 continue
 
-            # (priority, item)
+            # (priority, (filename, doc_path, pdf_path))
             cq.put((getsize(doc_path), (filename, doc_path, pdf_path)))
 
     print(f"Found {tot_files} files in total")
