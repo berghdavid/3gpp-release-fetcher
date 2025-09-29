@@ -5,8 +5,11 @@
 import argparse
 from ftplib import FTP, error_perm
 import os
+from typing import List
 import zipfile
-from os.path import join, relpath
+from queue import PriorityQueue
+from threading import Thread, Lock
+from os.path import join, relpath, getsize
 from requests import post
 from tqdm import tqdm
 
@@ -14,6 +17,8 @@ from tqdm import tqdm
 FTP_3GPP_HOST = "www.3gpp.org"
 DOWNLOADS_DIR = "downloads"
 PDF_DIR = "pdfs"
+
+cq = PriorityQueue()
 
 
 def ftp_recursive_download(ftp: FTP, remote_dir: str, local_dir: str):
@@ -65,7 +70,7 @@ def unzip_dirs(release_v: str):
                     print(f"Bad zip file: {zip_path}")
 
 
-def convert_docs(release_v: str, gotenberg_endpoint: str, timeout: float):
+def convert_docs(release_v: str, gotenberg_endpoint: str, timeout: float, threads: int):
     """Convert all unconverted .doc files to PDF in the extracted directory."""
     gotenberg_url = f"{gotenberg_endpoint}/forms/libreoffice/convert"
     root_dir = join(DOWNLOADS_DIR, release_v)
@@ -73,12 +78,18 @@ def convert_docs(release_v: str, gotenberg_endpoint: str, timeout: float):
     print(f"\tConversion url: {gotenberg_url}")
     print(f"\tTimeout:        {timeout:.2f}")
 
+    lock = Lock()
     fails = []
-    pre_converted = []
     converted = []
-    doc_files = 0
-    tot_files = 0
 
+    workers: List[Thread] = []
+    for i in range(threads):
+        t = Thread(target=converter_worker, args=(i, gotenberg_url, timeout, converted, lock))
+        workers.append(t)
+
+    pre_converted = []
+    doc_files = []
+    tot_files = 0
     for dirpath, _, filenames in os.walk(root_dir):
         tot_files += len(filenames)
         for filename in filenames:
@@ -86,8 +97,8 @@ def convert_docs(release_v: str, gotenberg_endpoint: str, timeout: float):
             if not (lower.endswith(".doc") or lower.endswith(".docx")):
                 continue
 
-            doc_files += 1
             doc_path = join(dirpath, filename)
+            doc_files.append(doc_path)
 
             # Mirror directory structure inside pdf_root
             pdf_dir = join(PDF_DIR, relpath(dirpath, root_dir))
@@ -98,27 +109,45 @@ def convert_docs(release_v: str, gotenberg_endpoint: str, timeout: float):
                 pre_converted.append(doc_path)
                 continue
 
-            with open(doc_path, "rb") as f:
-                files = {"files": (filename, f, "application/msword")}
-                response = post(gotenberg_url, files=files, timeout=timeout)
+            # (priority, item)
+            cq.put((getsize(doc_path), (filename, doc_path, pdf_path)))
 
-            if response.status_code == 200:
-                with open(pdf_path, "wb") as pdf_file:
-                    pdf_file.write(response.content)
-                print(f"✅ Converted: {doc_path} → {pdf_path}")
-                converted.append(doc_path)
-            else:
-                print(f"❌ Failed ({response.status_code} - {response.text}): {doc_path}")
-                fails.append(doc_path)
-    
     print(f"Found {tot_files} files in total")
-    print(f"Found {doc_files} convertible files")
+    print(f"Found {len(doc_files)} convertible files")
     print(f"PDFs already existed for {len(pre_converted)} files")
-    print(f"PDFs were created for {len(converted)} files")
-    print(f"Conversion failed for {len(fails)} files")
-    if len(fails) > 0:
-        print(f"The following file conversions failed:\n{fails}")
 
+    for t in workers:
+        t.start()
+
+    cq.join()
+    for t in workers:
+        t.join()
+
+    failed = [x for x in doc_files if x not in converted and x not in pre_converted]
+    convertibles = len(doc_files)-len(pre_converted)
+    print(f"PDFs were created for {len(converted)}/{convertibles} files")
+    print(f"Conversion failed for {len(failed)}/{convertibles} files")
+    if len(fails) > 0:
+        print(f"The following file conversions failed:\n{failed}")
+
+
+def converter_worker(id: int, gotenberg_url: str, timeout: float, converted: List[str], lock: Lock):
+    while not cq.empty():
+        _, item = cq.get()
+        filename, doc_path, pdf_path = item
+        with open(doc_path, "rb") as f:
+            files = {"files": (filename, f, "application/msword")}
+            response = post(gotenberg_url, files=files, timeout=timeout)
+
+        if response.status_code == 200:
+            with open(pdf_path, "wb") as pdf_file:
+                pdf_file.write(response.content)
+            print(f"✅ Converted by {id}: {doc_path} → {pdf_path}")
+            with lock:
+                converted.append(doc_path)
+        else:
+            print(f"❌ Failed by {id} ({response.status_code} - {response.text}): {doc_path}")
+        cq.task_done()
 
 
 def get_parser() -> argparse.ArgumentParser:
@@ -137,6 +166,8 @@ def get_parser() -> argparse.ArgumentParser:
                         required=False, metavar='\b', help="Skip the PDF conversion stage.")
     parser.add_argument("-t", "--timeout", dest="timeout", type=float, default=60.0,
                         required=False, metavar='\b', help="PDF conversion timeout.")
+    parser.add_argument("-p", "--threads", dest="threads", type=int, default=1,
+                        required=False, metavar='\b', help="Threads to run in parallel.")
     return parser
 
 
@@ -152,7 +183,7 @@ def main():
     else:
         print("Skipping unzipping as `--skip-unzip` was provided...")
     if not args.skip_convert:
-        convert_docs(args.version, args.gotenberg, args.timeout)
+        convert_docs(args.version, args.gotenberg, args.timeout, args.threads)
     else:
         print("Skipping pdf-conversion as `--skip-convert` was provided...")
 
