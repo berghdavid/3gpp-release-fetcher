@@ -10,7 +10,7 @@ import zipfile
 from queue import PriorityQueue
 from threading import Thread, Lock
 from os.path import join, relpath, getsize
-from requests import post
+from requests import post, Timeout
 from tqdm import tqdm
 
 
@@ -111,9 +111,11 @@ def convert_docs(release_v: str, gotenberg_endpoint: str, timeout: float, thread
             # (priority, (filename, doc_path, pdf_path))
             cq.put((getsize(doc_path), (filename, doc_path, pdf_path)))
 
+    convertibles = len(doc_files)-len(pre_converted)
     print(f"Found {tot_files} files in total")
     print(f"Found {len(doc_files)} convertible files")
     print(f"PDFs already existed for {len(pre_converted)} files")
+    print(f"Starting conversion of {convertibles} files...")
 
     for t in workers:
         t.start()
@@ -123,7 +125,6 @@ def convert_docs(release_v: str, gotenberg_endpoint: str, timeout: float, thread
         t.join()
 
     failed = [x for x in doc_files if x not in converted and x not in pre_converted]
-    convertibles = len(doc_files)-len(pre_converted)
     print(f"PDFs were created for {len(converted)}/{convertibles} files")
     print(f"Conversion failed for {len(failed)}/{convertibles} files")
     if len(fails) > 0:
@@ -136,7 +137,11 @@ def converter_worker(id: int, gotenberg_url: str, timeout: float, converted: Lis
         filename, doc_path, pdf_path = item
         with open(doc_path, "rb") as f:
             files = {"files": (filename, f, "application/msword")}
-            response = post(gotenberg_url, files=files, timeout=timeout)
+            try:
+                response = post(gotenberg_url, files=files, timeout=timeout)
+            except Timeout as e:
+                print(f"Error: Timeout - {e.strerror}")
+                continue
 
         if response.status_code == 200:
             with open(pdf_path, "wb") as pdf_file:
